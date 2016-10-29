@@ -18,13 +18,13 @@ from circus.tests.support import (TestCircus, async_poll_for, truncate_file,
                                   EasyTestSuite, skipIf, get_ioloop, SLEEP,
                                   PYTHON)
 from circus.util import (DEFAULT_ENDPOINT_DEALER, DEFAULT_ENDPOINT_MULTICAST,
-                         DEFAULT_ENDPOINT_SUB)
+                         DEFAULT_ENDPOINT_SUB, parse_env_dict)
 from circus.watcher import Watcher
 from circus.tests.support import (has_circusweb, poll_for_callable,
                                   get_available_port)
 from circus import watcher as watcher_mod
 from circus.py3compat import s
-
+from circus.tests.test_config import _CONF
 
 _GENERIC = os.path.join(os.path.dirname(__file__), 'generic.py')
 
@@ -627,6 +627,27 @@ class TestArbiter(TestCircus):
     Unit tests for the arbiter class to codify requirements within
     behavior.
     """
+
+    @tornado.testing.gen_test
+    def test_find_plugin_in_pythonpath(self):
+        config = _CONF['find_plugin_in_pythonpath']
+
+        arbiter = Arbiter.load_from_config(config, loop=get_ioloop())
+
+        callback = mock.MagicMock()
+
+        try:
+            yield arbiter.start(cb=callback)
+            watchers = arbiter.iter_watchers()
+            self.assertEqual(watchers[0].name, 'plugin:relative_plugin')
+            self.assertEqual(watchers[0].is_stopped(), False)
+            self.assertEqual(watchers[0]._status, 'active')
+        finally:
+            yield arbiter.stop()
+
+        self.assertEqual(callback.call_count, 0)
+
+
     def test_start_with_callback(self):
         controller = "tcp://127.0.0.1:%d" % get_available_port()
         sub = "tcp://127.0.0.1:%d" % get_available_port()

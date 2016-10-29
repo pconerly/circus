@@ -1,5 +1,6 @@
 """ Base class to create Circus subscribers plugins.
 """
+import json
 import sys
 import errno
 import uuid
@@ -14,7 +15,7 @@ from circus.client import make_message, cast_message
 from circus.py3compat import b, s
 from circus.util import (debuglog, to_bool, resolve_name, configure_logger,
                          DEFAULT_ENDPOINT_DEALER, DEFAULT_ENDPOINT_SUB,
-                         get_connection)
+                         get_connection, get_python_version)
 
 
 class CircusPlugin(object):
@@ -157,31 +158,74 @@ class CircusPlugin(object):
     def load_message(msg):
         return json.loads(msg)
 
+    @classmethod
+    def load_from_config(cls, config):
+        print "watcher:load_from_config"
+        if 'env' in config:
+            # print "we got env: %s" % config['env']['PYTHONPATH']
+            # print "we got env: %s" % config['env']['PATH']
+            config['env'] = parse_env_dict(config['env'])
+            # print "after-env: %s" % config['env']['PYTHONPATH']
+            # print "after-env: %s" % config['env']['PATH']
+        # cfg = config.copy()
+
+        # w = cls(name=config.pop('name'), cmd=config.pop('cmd'), **config)
+        # w._cfg = cfg
+
+        return config
+
+import os
+LOG_FILE = os.path.join('/Users/peterconerly/code/circus', 'derp.txt')
+
+def shitty_log(msg):
+    with open(LOG_FILE, 'a') as fout:
+        print msg
+        try:
+            fout.write(msg)
+            fout.write('\n')
+        except:
+            pass
+
 
 def _cfg2str(cfg):
-    return ':::'.join(['%s:%s' % (key, val) for key, val in cfg.items()])
+    json_cfg = json.dumps(cfg, separators=(':::', ':'))
+    if get_python_version() < (3, 0, 0):
+        return json_cfg.encode('unicode-escape').replace(b'"', b'\\"')
+    else:
+        return json_cfg.encode('string-escape').replace('"', '\\"')
 
 
 def _str2cfg(data):
-    cfg = {}
-    if data is None:
-        return cfg
+    data = data.replace(':::', ',')
+    # json.JSONEncoder(separators)
+    shitty_log( "What's data?")
+    shitty_log( data)
+    shitty_log( "-----")
+    result = json.loads(data)
+    shitty_log( "What's result?")
+    shitty_log( result)
+    shitty_log( "-----")
+    return result
+    # cfg = {}
+    # if data is None:
+    #     return cfg
 
-    for item in data.split(':::'):
-        item = item.split(':', 1)
-        if len(item) != 2:
-            continue
-        key, value = item
-        cfg[key.strip()] = value.strip()
+    # for item in data.split(':::'):
+    #     item = item.split(':', 1)
+    #     if len(item) != 2:
+    #         continue
+    #     key, value = item
+    #     cfg[key.strip()] = value.strip()
 
-    return cfg
+    # return cfg
 
 
 def get_plugin_cmd(config, endpoint, pubsub, check_delay, ssh_server,
                    debug=False, loglevel=None, logoutput=None):
     fqn = config['use']
     # makes sure the name exists
-    resolve_name(fqn)
+
+    # resolve_name(fqn)
 
     # we're good, serializing the config
     del config['use']
@@ -245,6 +289,46 @@ def main():
         parser.print_usage()
         sys.exit(0)
 
+    shitty_log("resolving name")
+
+
+    cfg = _str2cfg(args.config)
+    shitty_log(cfg)
+
+    import site
+
+    # import ipdb
+    # ipdb.set_trace()
+
+    env = cfg.get('env', dict())
+
+    if cfg.get('copy_env'):
+        cfg['env'] = os.environ.copy()
+        if cfg.get('copy_path'):
+            path = os.pathsep.join(sys.path)
+            cfg['env']['PYTHONPATH'] = path
+        if env is not None:
+            cfg['env'].update(env)
+    else:
+        if cfg.get('copy_path'):
+            raise ValueError(('copy_env and copy_path must have the '
+                              'same value'))
+        cfg['env'] = env
+
+    # if cfg.has_key('virtualenv'):
+    #     util.load_virtualenv(cfg, py_ver=virtualenv_py_ver)
+
+    # load directories in PYTHONPATH if provided
+    # so if a hook is there, it can be loaded
+    if cfg.get('env', None) is not None and 'PYTHONPATH' in cfg['env']:
+        shitty_log("first hurdle")
+        for path in cfg['env']['PYTHONPATH'].split(os.pathsep):
+            if path in sys.path:
+                continue
+            shitty_log("adding path to site")
+            site.addsitedir(path)
+
+    print "--------- about to explode"
     factory = resolve_name(args.plugin)
 
     # configure the logger
@@ -256,7 +340,7 @@ def main():
     logger.info('Pub/sub: %r' % args.pubsub)
     plugin = factory(args.endpoint, args.pubsub,
                      args.check_delay, args.ssh,
-                     **_str2cfg(args.config))
+                     **cfg)
     logger.info('Starting')
     try:
         plugin.start()
